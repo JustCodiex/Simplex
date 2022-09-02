@@ -23,7 +23,7 @@ void vec_mul(vector* v, double s) {
 
 void vec_add(vector* a, vector* b) {
     if (a->size != b->size) {
-        fprintf(stderr, "Attempt to add a vector of dimension %i to a vector with dimension %i", b->size, a->size);
+        fprintf(stderr, "Attempt to add a vector of dimension %i to a vector with dimension %i\n", b->size, a->size);
         exit(-1);
     }
     for (int i = 0; i < a->size; i++){
@@ -177,7 +177,53 @@ void eliminate_column(dictionary* dic, int column) {
     if (column == -1)
         return;
 
-    // TODO: Implement
+    // If last column, we can resize
+    if (column == dic->dic.columns - 2) {
+
+        // Create new matrix
+        matrix m = mat(dic->dic.rows, dic->dic.columns - 1);
+        for (int i = 0; i < dic->dic.rows; i++) {
+            for (int j = 0; j < dic->dic.columns - 1; j++) {
+                m.data[i].data[j] = dic->dic.data[i].data[j];
+            }
+        }
+
+        // Alloc new vars table
+        unsigned char* vs = malloc(sizeof(unsigned char) * (dic->varc - 1 + dic->dic.rows - 1));
+        for (int i = 0; i < dic->varc - 1; i++)
+            vs[i] = dic->vars[i] - (dic->vars[i] > (dic->varc - 1) ? 1 : 0);
+        for (int i = dic->varc - 1; i < dic->varc - 1 + dic->dic.rows - 1; i++)
+            vs[i] = dic->vars[i + 1] - (dic->vars[i + 1] > (dic->varc - 1) ? 1 : 0);
+
+        // free old matrix
+        freemat(&dic->dic);
+
+        // Free old vars
+        free(dic->vars);
+
+        // update
+        dic->dic = m;
+        dic->varc -= 1;
+        dic->vars = vs;
+
+    } else {
+
+        // Move column closer to end
+        for (int i = 0; i < dic->dic.rows; i++) {
+            double tmp = dic->dic.data[i].data[column + 1];
+            dic->dic.data[i].data[column + 1] = dic->dic.data[i].data[column+2];
+            dic->dic.data[i].data[column+2] = tmp;
+        }
+
+        // Fix vars
+        int v = dic->vars[column];
+        dic->vars[column] = dic->vars[column + 1];
+        dic->vars[column + 1] = v;
+
+        // Call self
+        eliminate_column(dic, column + 1);
+
+    }
 
 }
 
@@ -357,7 +403,7 @@ dictionary phase_one(dictionary initial) {
     eliminate_column(&aux, index_of(aux.vars, 0, 0, aux.varc));
 
     // Reintroduce objective function and remove x0
-    vector obj = vec(aux.dic.columns);
+    vector obj = vec(initial.varc + 1);
     for (int i = 0; i < initial.varc; i++) {
 
         // Find the value in 
@@ -381,16 +427,16 @@ dictionary phase_one(dictionary initial) {
     }
 
     // free current
-    print_vec(&obj);
     freevec(&aux.dic.data[0]);
     aux.dic.data[0] = obj;
     
     // Log main problem
     printf("---   Solving Main Problem   ---\n\n");
     print_dictionary(&aux);
+    printf("\n");
 
-    // Do an exit (Debug)
-    exit(0);
+    // Set state
+    aux.state = SIMPLEX_STATE_FEASIBLE;
 
     // Return the dictionary
     return aux;
