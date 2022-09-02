@@ -53,7 +53,7 @@ void print_matrix(matrix m) {
 typedef struct {
     matrix dic;
     char** vars;
-    int basic;
+    int varc;
     int state;
 } dictionary;
 
@@ -65,17 +65,23 @@ typedef struct {
 dictionary create_dic(vector* c, vector* b, matrix* a) {
 
     dictionary d;
-    d.basic = c->size;
-    d.dic = mat(a->rows + 1, a->columns + 1);
+    d.varc = c->size;
+    d.dic = mat(b->size + 1, c->size + 1);
     d.state = SIMPLEX_STATE_FEASIBLE;
 
     // Init basics
+    d.dic.data[0].data[0] = 0;
+
+    // Init objective row
     for (int i = 0; i < c->size; i++){
         d.dic.data[0].data[i+1] = c->data[i];
-        for (int j = 0; j < b->size; j++) {
-            d.dic.data[i+1].data[j+1] = -a->data[i].data[j];
-            if (i == 0)
-                d.dic.data[j+1].data[0] = b->data[j];
+    }
+
+    // Init nonbasic
+    for (int i = 0; i < b->size; i++){
+        d.dic.data[i + 1].data[0] = b->data[i];
+        for (int j = 0; j < c->size; j++) {
+            d.dic.data[i + 1].data[j + 1] = -a->data[i].data[j];
         }
     }
 
@@ -97,7 +103,7 @@ void print_dictionary(dictionary* dic) {
 
     // Print header (names of non-basics)
     printf("%18s  ", "");
-    for (int i = 0; i < dic->basic; i++) {
+    for (int i = 0; i < dic->varc; i++) {
         printf("%8s  ", dic->vars[i]);
     }
     printf("\n");
@@ -105,7 +111,7 @@ void print_dictionary(dictionary* dic) {
     // Print basics
     for (int i = 0; i < dic->dic.rows; i++) {
         if (i > 0) {
-            printf("%8s =", dic->vars[dic->basic - 1 + i]);
+            printf("%8s =", dic->vars[dic->varc - 1 + i]);
         } else {
             printf("%8s =", "Zeta");
         }
@@ -148,8 +154,10 @@ int find_pivot(matrix* dic, int* enter, int* leave) {
     double minRatio = INFINITY;
     for (int i = 1; i < dic->rows; i++){
         double num = dic->data[i].data[0];
-        double den = -dic->data[i].data[*enter];
-        double ratio = num == 0 && den == 0 ? 0 : (num / den);
+        double den = dic->data[i].data[*enter];
+        if (den == 0 && num != 0)
+            continue; // Avoid a division by 0
+        double ratio = num == 0 && den == 0 ? 0 : (num / -den);
         if (ratio < minRatio && ratio >= 0) {
             minRatio = ratio;
             *leave = i;
@@ -191,8 +199,8 @@ dictionary pivot(dictionary d, int enter, int leaving) {
 
     // Swap out vars
     char* tmp = d.vars[enter - 1];
-    d.vars[enter-1] = d.vars[d.basic + leaving - 1];
-    d.vars[d.basic + leaving - 1] = tmp;
+    d.vars[enter-1] = d.vars[d.varc + leaving - 1];
+    d.vars[d.varc + leaving - 1] = tmp;
 
     // Return updated dictionary
     return d;
@@ -243,7 +251,7 @@ void print_solution(dictionary* dic) {
     if (dic->state == SIMPLEX_STATE_SUCCESS) {
         printf("Maximum Value: %f\nVariables: ", dic->dic.data[0].data[0]);
         for (int i = 1; i < dic->dic.rows; i++) {
-            printf("%s = %.4f", dic->vars[dic->basic - 1 + i], dic->dic.data[i].data[0]);
+            printf("%s = %.4f", dic->vars[dic->varc - 1 + i], dic->dic.data[i].data[0]);
             if (i + 1 < dic->dic.rows)
                 printf(", ");
         }
@@ -331,7 +339,17 @@ linprog read_problem(const char* pFilePath) {
         // Set bound
         prog.b.data[i] = f;
 
-        // TODO: Rewrite consraint if not <=
+        // Correct constraint
+        if (strcmp(constrainType, ">=") == 0) {
+            prog.b.data[i] *= -1;
+            for (int j = 0; j < prog.vars; j++)
+                prog.a.data[i].data[j] *= -1;
+        } else if (strcmp(constrainType, "=") == 0) {
+            // TODO: Implement
+        } else if (strcmp(constrainType, "<=") != 0) {
+            fprintf(stderr, "Invalid constraint type '%s'\n", constrainType);
+            return prog;
+        }
 
     }
 

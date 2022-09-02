@@ -1,0 +1,6 @@
+variables 2
+max 7 6
+constraints 3
+3 0 <= 15
+0 2 <= 14
+3 4 <= 35
