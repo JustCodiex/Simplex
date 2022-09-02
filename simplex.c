@@ -87,11 +87,12 @@ dictionary create_dic(vector* c, vector* b, matrix* a) {
 
     // alloc name
     d.vars = (char**)malloc(sizeof(char*) * (c->size + b->size));
-    for (int i = 0; i < c->size; i++) {
-        d.vars[i] = malloc(sizeof(char) * 4);
-        sprintf(d.vars[i], "x%i", (i+1));}
-    for (int i = 0; i < b->size; i++) {        
-        d.vars[c->size + i] = malloc(sizeof(char) * 4);
+    for (unsigned char i = 0; i < c->size; i++) {
+        d.vars[i] = malloc(sizeof(char) * 4 + 1);
+        sprintf(d.vars[i], "x%i", (i+1));
+    }
+    for (unsigned char i = 0; i < b->size; i++) {        
+        d.vars[c->size + i] = malloc(sizeof(char) * 4 + 1);
         sprintf(d.vars[c->size + i], "w%i", (i+1));
     }
 
@@ -280,11 +281,17 @@ linprog read_problem(const char* pFilePath) {
 
     // Read over 'variables '
     fseek(pFile, 10, SEEK_SET);
-    fscanf(pFile, "%d", &prog.vars);
+    if (fscanf(pFile, "%d", &prog.vars) <= 0){
+        fprintf(stderr, "Problem variable count expected but none found.\n");
+        return prog;
+    }
 
     // Read minmax mode
     char minmax[4];
-    fscanf(pFile, "%3s", &minmax);
+    if (fscanf(pFile, "%3s", minmax) <= 0) {
+        fprintf(stderr, "Objective goal expected but was not valid. (allowed: min, max)\n");
+        return prog;
+    }
 
     // Read coefficients
     prog.c = vec(prog.vars);
@@ -299,7 +306,10 @@ linprog read_problem(const char* pFilePath) {
 
     // Read constraints
     char cons[12];
-    fscanf(pFile, "%11s", &cons);
+    if (fscanf(pFile, "%11s", cons) <= 0) {
+        fprintf(stderr, "'constraints' keyword expected following objective function definition.\n");
+        return prog;
+    }
 
     // Read constraints
     int constraints;
@@ -325,7 +335,7 @@ linprog read_problem(const char* pFilePath) {
 
         // Read mode
         char constrainType[3];
-        if (!fscanf(pFile, "%2s", &constrainType)){
+        if (!fscanf(pFile, "%2s", constrainType)){
             printf("Failed to read constraint type.\n");
             return prog;
         }
