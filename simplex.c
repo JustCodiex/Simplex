@@ -3,11 +3,30 @@
 #include <string.h>
 #include <math.h>
 
+// Grow an array to new size.
+void grow_array(void** target, size_t size, size_t elemSize, size_t newSize) {
+    
+    // Alloc new buffer
+    void* buffer = (void*) malloc(elemSize * newSize);
+    
+    // Copy of content and free old content
+    if (*target) {
+        memcpy(buffer, *target, elemSize * size);
+        free(*target);
+    }
+
+    // Update data
+    *target = buffer;
+
+}
+
+// Represents a vector of real values
 typedef struct {
-    int size;
-    double* data;
+    int size; // The size of the vector (amount of elements)
+    double* data; // The actual vector values
 } vector;
 
+// Get a new vector of specified size.
 vector vec(int size) {
     vector v;
     v.data = (double*)malloc(size * sizeof(double));
@@ -50,10 +69,11 @@ void print_vec(vector* v) {
     printf("]\n");
 }
 
+// Represents a NxM matrix of real values
 typedef struct {
-    int columns;
-    int rows;
-    vector* data;
+    int columns; // The amount of columns (M)
+    int rows; // The amount of rows (N)
+    vector* data; // The matrix values.
 } matrix;
 
 matrix mat(int r, int c) {
@@ -72,6 +92,33 @@ void freemat(matrix* m) {
     free(m->data);
 }
 
+// Add 'r' rows to an existing matrix.
+void mat_addrows(matrix* mat, int r, vector* rows) {
+    
+    // Bail if no rows to add
+    if (r <= 0)
+        return;
+
+    // Verify same dimensionality
+    if (rows[0].size != mat->columns) {
+        fprintf(stderr, "Cannot add %i new rows to matrix with %i columns when given rows only have %i columns", r, mat->columns, rows[0].size);
+        return;
+    }
+
+    // Grab new row array and copy data
+    vector* newRows = (vector*)malloc(sizeof(vector) * (r + mat->rows));
+    memcpy(newRows, mat->data, sizeof(vector) * mat->rows);
+    memcpy(newRows + mat->rows, rows, sizeof(vector) * r);
+
+    // Free old
+    free(mat->data);
+
+    // Update matrix
+    mat->data = newRows;
+    mat->rows += r;
+
+}
+
 void print_matrix(matrix m) {
     for (int i = 0; i < m.rows; i++) {
         for (int j = 0; j < m.columns; j++) {
@@ -81,20 +128,29 @@ void print_matrix(matrix m) {
     }
 }
 
+// Represents a dictionary in the simplex method.
 typedef struct {
-    matrix dic;
-    unsigned char* vars;
-    int varc;
-    int state;
+    matrix dic; // The dictionary contents
+    unsigned char* vars; // The variable indices at the given positions
+    int varc; // The amount of decision variables
+    int state; // The current state of the dictionary
 } dictionary;
 
+// Simplex state when terminating in an optimal state
 #define SIMPLEX_STATE_SUCCESS 0
+
+// Simplex state when an infeasible dictionary is encountered
 #define SIMPLEX_STATE_INFEASIBLE -1
+
+// Simplex state when the problem is unbounded (feasible but no optimal solution)
 #define SIMPLEX_STATE_UNBOUNDED -2
+
+// Simplex state when the current dictionary is feasible
 #define SIMPLEX_STATE_FEASIBLE 1
 
 dictionary create_dic(vector* c, vector* b, matrix* a) {
 
+    // Dictionary to be formed from input
     dictionary d;
     d.varc = c->size;
     d.dic = mat(b->size + 1, c->size + 1);
@@ -137,11 +193,11 @@ void get_var(dictionary* dic, char n[5], int v) {
 void print_dictionary(dictionary* dic) {
 
     // Print header (names of non-basics)
-    printf("%18s  ", "");
+    printf("%34s  ", "");
     for (int i = 0; i < dic->varc; i++) {
         char n[5];
         get_var(dic, n, dic->vars[i]);
-        printf("%8s  ", n);
+        printf("%16s  ", n);
     }
     printf("\n");
 
@@ -150,9 +206,9 @@ void print_dictionary(dictionary* dic) {
         if (i > 0) {
             char n[5];
             get_var(dic, n, dic->vars[dic->varc - 1 + i]);
-            printf("%8s =", n);
+            printf("%16s =", n);
         } else {
-            printf("%8s =", "Zeta");
+            printf("%16s =", "Zeta");
         }
         for (int j = 0; j < dic->dic.columns; j++) {
             double v = dic->dic.data[i].data[j];
@@ -164,7 +220,7 @@ void print_dictionary(dictionary* dic) {
                     printf("+");
                 }
             }
-            printf("%8.4f ", v);
+            printf("%16.4f ", v);
         }
         printf("\n");
     }
@@ -419,7 +475,9 @@ dictionary phase_one(dictionary initial) {
         if (k != -1) {
             vec_copy(&aux.dic.data[k], &v);
         } else {
-            // TODO: Implement
+            aux.state = SIMPLEX_STATE_INFEASIBLE; // x_0 != 0 and thus no feasible solution to the auxiliary problem
+            // This will require a check on x_0 value in basic variables section but too lazy to do that now
+            return aux;
         }
         // Multiply and add to updated objective function
         vec_mul(&v, scalar);
@@ -518,12 +576,12 @@ void print_solution(dictionary* dic) {
             if (i + 1 < dic->dic.rows)
                 printf(", ");
         }
-        printf("\n\n");
     } else if (dic->state == SIMPLEX_STATE_INFEASIBLE) {
         printf("Problem is infeasible and has no solution");
     } else if (dic->state == SIMPLEX_STATE_UNBOUNDED) {
         printf("Problem is unbounded and thus has no optimal solution");
     }
+    printf("\n\n");
 
 }
 
@@ -584,6 +642,15 @@ linprog read_problem(const char* pFilePath) {
         return prog;
     }
 
+    // Bounds buffer
+    double* bufBounds = 0;
+
+    // Constraint buffer
+    vector* bufCons = 0;
+
+    // Buffer size tracker
+    size_t addBuffCount = 0;
+
     // Write how many constraints we have
     prog.a = mat(constraints, prog.vars);
     prog.b = vec(constraints);
@@ -618,10 +685,21 @@ linprog read_problem(const char* pFilePath) {
         // Correct constraint
         if (strcmp(constrainType, ">=") == 0) {
             prog.b.data[i] *= -1;
-            for (int j = 0; j < prog.vars; j++)
-                prog.a.data[i].data[j] *= -1;
+            vec_mul(&prog.a.data[i], -1);
         } else if (strcmp(constrainType, "=") == 0) {
-            // TODO: Implement
+            
+            // Grow arrays
+            grow_array((void**)&bufBounds, addBuffCount, sizeof(double), addBuffCount + 1);
+            grow_array((void**)&bufCons, addBuffCount, sizeof(vector), addBuffCount + 1);
+
+            // Set constraint and bounds for '<=' ==> we need to do * -1 to convert it to standard form
+            bufBounds[addBuffCount] = -prog.b.data[i];
+            vec_copy(&prog.a.data[i], &bufCons[addBuffCount]);
+            vec_mul(&bufCons[addBuffCount], -1);
+
+            // Increment count
+            addBuffCount++;
+
         } else if (strcmp(constrainType, "<=") != 0) {
             fprintf(stderr, "Invalid constraint type '%s'\n", constrainType);
             return prog;
@@ -632,10 +710,35 @@ linprog read_problem(const char* pFilePath) {
     // Close file
     fclose(pFile);
 
+    // Append if needed
+    if (bufBounds && bufCons) {
+        
+        // Add to bounds
+        vector b = vec(prog.b.size + (int)addBuffCount);
+        memcpy(b.data, prog.b.data, sizeof(double) * prog.b.size);
+        memcpy(b.data + prog.b.size, bufBounds, sizeof(double) * addBuffCount);
+
+        // Free old bounds array and set new
+        freevec(&prog.b);
+        prog.b = b;
+        //printf()
+
+        // Add constraint rows
+        mat_addrows(&prog.a, addBuffCount, bufCons);
+
+    }
+
     // Set mode
     if (strcmp(minmax, "max") == 0){
-        prog.max = 0;
-    } // TODO: Rewrite if 'min'
+        prog.max = 1;
+    } else if (strcmp(minmax, "min") == 0) {
+        prog.max = 0; // Is minimise
+        // Negative all coefficients
+        for (int i = 0; i < prog.c.size; i++)
+            prog.c.data[i] *= -1;
+    } else {
+        fprintf(stderr, "Invalid objective goal '%s'.\n", minmax);
+    }
 
     // Return problem
     return prog;
